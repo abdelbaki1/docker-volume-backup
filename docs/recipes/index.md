@@ -71,7 +71,6 @@ volumes:
   data:
 ```
 
-
 ## Backing up to MinIO (using Docker secrets)
 
 ```yml
@@ -99,6 +98,126 @@ secrets:
     # ... define how secret is accessed
   minio_secret_key:
     # ... define how secret is accessed
+```
+
+## Using MinIO Client Integration for Backup and Restore
+
+This recipe demonstrates how to use the new MinIO client integration for both backup and restore operations.
+
+### Backup to MinIO using MinIO Client
+
+```yml
+version: '3'
+
+services:
+  # ... define other services using the `data` volume here
+  backup:
+    image: offen/docker-volume-backup:v2
+    environment:
+      OPERATION_MODE: backup
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_NAME: my-backups
+    volumes:
+      - data:/backup/my-app-backup:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+
+volumes:
+  data:
+```
+
+### Restore from MinIO using MinIO Client
+
+```yml
+version: '3'
+
+services:
+  restore:
+    image: offen/docker-volume-backup:v2
+    environment:
+      OPERATION_MODE: restore
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RESTORE_SOURCE: s3://my-backups/backup-20240326.zip
+      RESTORE_DESTINATION: restored-data
+    volumes:
+      - restored-data:/restore
+
+volumes:
+  restored-data:
+```
+
+### Complete Example with MinIO Server, Backup, and Restore
+
+```yml
+version: '3'
+
+services:
+  # MinIO server for object storage
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"  # API
+      - "9001:9001"  # Console
+    volumes:
+      - minio-data:/data
+
+  # Application that uses a volume
+  app:
+    image: nginx:alpine
+    volumes:
+      - app-data:/usr/share/nginx/html
+    ports:
+      - "8080:80"
+
+  # Backup service
+  backup:
+    image: offen/docker-volume-backup:v2
+    environment:
+      OPERATION_MODE: backup
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET_NAME: backups
+      BACKUP_CRON_EXPRESSION: "0 * * * *"  # Hourly backup
+    volumes:
+      - app-data:/backup/app-data:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - minio
+
+  # Restore service (disabled by default, enable when needed)
+  restore:
+    image: offen/docker-volume-backup:v2
+    profiles: ["restore"]  # Only starts when explicitly requested
+    environment:
+      OPERATION_MODE: restore
+      MINIO_ENDPOINT: http://minio:9000
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      RESTORE_SOURCE: s3://backups/backup-latest.tar.gz
+      RESTORE_DESTINATION: restored-data
+    volumes:
+      - restored-data:/restore
+    depends_on:
+      - minio
+
+volumes:
+  minio-data:
+  app-data:
+  restored-data:
+```
+
+To run the restore service when needed:
+
+```console
+docker-compose --profile restore up restore
 ```
 
 ## Backing up to WebDAV
